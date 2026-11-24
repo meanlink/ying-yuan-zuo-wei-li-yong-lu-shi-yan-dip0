@@ -67,6 +67,7 @@ Compose 共有五个服务。backend 和 worker 等待 db、redis 健康，front
 ```text
 backend/src/models.py                 领域实体和审计日志
 backend/src/routes/plans.py           排片、实验、观测、分析和审批接口
+backend/src/subsidy/                  周末试行补贴池、占用台账和配置接口
 backend/src/services/analytics.py     Bootstrap、平衡比、分层效应量
 backend/src/services/workflow.py      状态流转和业务规则
 backend/scripts/seed_demo.py          幂等演示数据
@@ -86,8 +87,9 @@ test-artifacts/gb-1057/tests          API 端到端和算法测试
 
 - **票房班结对账**。票房专员按实验单元登记 POS 批次、观测座位数、售出票数和实收金额。系统保存登记时的观测快照和对账差异。登记第一张回执后，所有单元须对齐才可运行或审批分析。迟到观测会使相关回执过期，需要补对后重新分析。
 - **审批后排片试行**。收益经理引用当前观测对应的已审批复盘，选择 treatment 座区、下一场日期时间和投放座数。排片策划记录排片系统回执和实际投放数；收益经理可撤回尚未执行的工单。工单检查同影厅开场冲突，保留原复盘与撤回历史。
+- **周末试行补贴**。收益经理设置周末补贴总额和每座标准，所有排片版本共用同一个补贴池。派发工单时按计划座位数占额度，排片确认时按实投座位扣款并把差额放回余额，撤回工单时整笔占用释放。补贴池行级锁保证并发派单不超发，余额不足的工单不落账；回执与撤回相撞时先办成的算数；同一回执编号重试返回已确认工单，不重复扣款。工单台账逐场展示补贴占用、实扣和周末剩余额度。
 
-通过页首「当前排片」在版本之间切换。已有 PostgreSQL 卷启动时自动补齐 `pos_closeouts` 和 `scheduling_pilots`。模块使用 `operations_models.py`、`operations_schemas.py`、`services/operations.py` 和 `frontend/src/operations.js`，异常及操作写入现有审计。没有登记过 POS 回执的历史排片可继续按原流程复盘。
+通过页首「当前排片」在版本之间切换。已有 PostgreSQL 卷启动时自动补齐 `pos_closeouts`、`scheduling_pilots` 和周末补贴表。模块使用 `operations_models.py`、`operations_schemas.py`、`services/operations.py` 和 `frontend/src/operations.js`，异常及操作写入现有审计。没有登记过 POS 回执的历史排片可继续按原流程复盘。
 
 ### 试行场次结算
 

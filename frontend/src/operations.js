@@ -60,6 +60,32 @@ export function closeoutsPage(state) {
     ${panel(`${escape(selected.hall_name)} · ${escape(selected.seat_zone)}`,compare(selected,latest)+notice+history+editor,chip(selected.status,closeoutLabels))}</div>`;
 }
 
+function subsidyLine(trial) {
+  const sub = trial.subsidy;
+  if (!sub) return '';
+  if (sub.state === 'reserved') return `<p class="ops-subsidy">补贴占用 ${currency(sub.reserved_cents)}（计划 ${trial.pilot_seats} 座 × ${currency(sub.per_seat_cents)}）</p>`;
+  if (sub.state === 'charged') return `<p class="ops-subsidy">补贴实扣 ${currency(sub.charged_cents)}（实投 ${trial.actual_seats} 座）· 差额 ${currency(sub.reserved_cents - sub.charged_cents)} 已回池</p>`;
+  return `<p class="ops-subsidy">补贴占用 ${currency(sub.reserved_cents)} 已随撤回整笔释放</p>`;
+}
+
+function subsidyPanel(state) {
+  const subsidy = state.pilotSubsidy;
+  const canConfigure = ['revenue','admin'].includes(state.user.role);
+  if (!subsidy?.configured && !canConfigure) return '';
+  const metrics = subsidy?.configured ? `<div class="metric-row five">
+    <div class="metric"><span>周末补贴总额</span><strong>${currency(subsidy.total_cents)}</strong><small>各排片版本共用</small></div>
+    <div class="metric"><span>每座标准</span><strong>${currency(subsidy.per_seat_cents)}</strong><small>派单占用口径</small></div>
+    <div class="metric"><span>占用中</span><strong>${currency(subsidy.reserved_cents)}</strong><small>待排片工单</small></div>
+    <div class="metric"><span>已实扣</span><strong>${currency(subsidy.charged_cents)}</strong><small>已确认场次</small></div>
+    <div class="metric accent"><span>周末剩余额度</span><strong>${currency(subsidy.remaining_cents)}</strong><small>可继续派单</small></div></div>`
+    : '<p>尚未设置周末补贴总额和每座标准，收益经理配置后才能派发试行工单。</p>';
+  const editor = canConfigure ? `<form class="ops-form" data-cinema-op="configureSubsidy">
+    <div class="ops-fields"><label>补贴总额（元）<input name="total" type="number" min="0" step="0.01" value="${subsidy?.configured ? (subsidy.total_cents / 100).toFixed(2) : ''}" required></label>
+    <label>每座标准（元）<input name="per_seat" type="number" min="0.01" step="0.01" value="${subsidy?.configured ? (subsidy.per_seat_cents / 100).toFixed(2) : ''}" required></label></div>
+    <button class="button secondary" type="submit">保存补贴标准</button></form>` : '';
+  return panel('周末试行补贴 · 各排片版本共用', metrics + editor);
+}
+
 export function pilotsPage(state) {
   const plan = state.selectedPlan;
   const trials = state.pilots || [];
@@ -83,11 +109,12 @@ export function pilotsPage(state) {
       ${field('撤回说明','result_note','说明场次变更或资源冲突')}<button class="button secondary" type="submit">确认撤回</button></form></details>` : '';
     return `<article class="ops-trial"><div class="ops-trial-head"><div><h4>${escape(trial.hall_name)} · ${escape(trial.seat_zone)}</h4>
       <p>${escape(trial.show_date)} ${escape(trial.show_time)} · 已审批复盘 #${trial.review_id}</p></div>${chip(trial.status,pilotLabels)}</div>
-      <p>计划 ${trial.pilot_seats} 座${trial.actual_seats ? ` · 实投 ${trial.actual_seats} 座` : ''}</p><p>${escape(trial.objective)}</p>
+      <p>计划 ${trial.pilot_seats} 座${trial.actual_seats ? ` · 实投 ${trial.actual_seats} 座` : ''}</p>${subsidyLine(trial)}<p>${escape(trial.objective)}</p>
       ${trial.result_note ? `<div class="ops-receipt"><strong>${trial.booking_ref ? `回执 ${escape(trial.booking_ref)}` : '撤回说明'}</strong><p>${escape(trial.result_note)}</p></div>` : ''}
       ${confirm}${withdraw}</article>`;
   }).join('');
-  return `<p class="ops-intro">从已审批的实验结果安排下一场 treatment 座区试行，排片策划录回正式排片编号和实投座数。</p>
+  return `<p class="ops-intro">从已审批的实验结果安排下一场 treatment 座区试行，排片策划录回正式排片编号和实投座数。派单按计划座位占用周末补贴，确认按实投扣款，差额自动回池。</p>
+    ${subsidyPanel(state)}
     <div class="ops-layout">${panel('排片试行台账',cards || '<p>暂无试行工单。收益经理可在复盘审批完成后派发。</p>')}${planForm}</div>`;
 }
 
@@ -97,13 +124,19 @@ export async function loadOperation(state) {
   if (!id) return;
   const endpoint = {closeouts:'pos-closeouts', pilots:'scheduling-pilots'}[current];
   if (!endpoint) return;
-  const {items} = await request(`/plans/${id}/${endpoint}`);
-  if (state.selectedPlan?.id === id && state.current === current) state[current] = items;
+  const data = await request(`/plans/${id}/${endpoint}`);
+  if (state.selectedPlan?.id === id && state.current === current) {
+    state[current] = data.items;
+    if (current === 'pilots') state.pilotSubsidy = data.subsidy;
+  }
 }
 
 const paths = {
-  closeout: () => '/pos-closeouts', createPilot: () => '/scheduling-pilots',
-  confirmPilot: id => `/scheduling-pilots/${id}/confirm`, withdrawPilot: id => `/scheduling-pilots/${id}/withdraw`,
+  closeout: planId => `/plans/${planId}/pos-closeouts`,
+  createPilot: planId => `/plans/${planId}/scheduling-pilots`,
+  confirmPilot: (planId, id) => `/plans/${planId}/scheduling-pilots/${id}/confirm`,
+  withdrawPilot: (planId, id) => `/plans/${planId}/scheduling-pilots/${id}/withdraw`,
+  configureSubsidy: () => '/subsidy-pool',
 };
 
 export function bindOperations(state, render, run, notify) {
@@ -119,14 +152,19 @@ export function bindOperations(state, render, run, notify) {
       if (Object.hasOwn(fields,field)) fields[field] = Number(fields[field]);
     }
     if (key === 'closeout') Object.assign(fields,{unit_id:Number(form.dataset.unit),expected_closeout_id:Number(form.dataset.expected)});
+    if (key === 'configureSubsidy') {
+      fields.total = Number(fields.total);
+      fields.per_seat = Number(fields.per_seat);
+    }
     const submit = form.querySelector('button[type=submit]');
     submit.disabled = true;
     run(async () => {
       try {
-        const result = await request(`/plans/${state.selectedPlan.id}${paths[key](form.dataset.id)}`, {method:'POST',body:JSON.stringify(fields)});
+        const method = key === 'configureSubsidy' ? 'PUT' : 'POST';
+        const result = await request(paths[key](state.selectedPlan?.id, form.dataset.id), {method, body:JSON.stringify(fields)});
         await loadOperation(state);
         render();
-        notify(result.status === 'discrepancy' ? '回执已登记，观测存在差异。' : '业务记录已保存。');
+        notify(result.status === 'discrepancy' ? '回执已登记，观测存在差异。' : key === 'configureSubsidy' ? '周末补贴标准已保存。' : '业务记录已保存。');
       } finally {
         submit.disabled = false;
       }

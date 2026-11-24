@@ -8,6 +8,7 @@ from .middlewares.rate_limit import RateLimitMiddleware
 from .middlewares.request_id import RequestIdMiddleware
 from .routes import auth, observations, operations, plans
 from .settlement import routes as settlement
+from .subsidy import routes as subsidy
 
 app = FastAPI(title="影院座位利用率实验")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
@@ -18,6 +19,7 @@ app.include_router(plans.router, prefix="/api")
 app.include_router(operations.router, prefix="/api")
 app.include_router(observations.router, prefix="/api")
 app.include_router(settlement.router, prefix="/api")
+app.include_router(subsidy.router, prefix="/api")
 
 @app.get("/health")
 def health():

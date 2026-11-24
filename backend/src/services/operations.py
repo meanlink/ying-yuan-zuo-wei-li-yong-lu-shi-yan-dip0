@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ..models import ExperimentUnit, RevenueReview, ScreeningPlan, TicketObservation, now_utc
 from ..operations_models import PosCloseout, SchedulingPilot
+from ..subsidy import service as subsidy
 from .workflow import audit
 
 CINEMA_TZ = ZoneInfo('Asia/Shanghai')
@@ -117,6 +118,7 @@ def save_pilot(db, plan_id, payload, actor):
         if getattr(exc.orig.diag, 'constraint_name', None) != 'uq_pilot_timeslot':
             raise
         raise HTTPException(409, '该影厅在指定日期和开场时间已有试行工单') from exc
+    subsidy.reserve(db, pilot, actor)
     audit(db, actor, 'scheduling_pilot_assigned', 'scheduling_pilot', pilot.id, f'approved_review={review.id}')
     return pilot
 
@@ -127,6 +129,9 @@ def resolve_pilot(db, plan_id, pilot_id, payload, actor, *, withdraw=False):
     row = db.scalar(statement)
     if row is None:
         raise HTTPException(404, '试行工单不存在')
+    if not withdraw and row.status == 'scheduled' and row.booking_ref == payload.booking_ref:
+        # 同一回执重试：补贴已按实投扣款，直接返回当前工单，不重复扣款
+        return row
     if row.status != 'assigned':
         raise HTTPException(409, '仅待排片工单可执行或撤回')
     if not withdraw:
@@ -144,5 +149,9 @@ def resolve_pilot(db, plan_id, pilot_id, payload, actor, *, withdraw=False):
         if getattr(exc.orig.diag, 'constraint_name', None) != 'scheduling_pilots_booking_ref_key':
             raise
         raise HTTPException(409, '排片系统回执编号已被使用') from exc
+    if withdraw:
+        subsidy.release(db, row, actor)
+    else:
+        subsidy.settle(db, row, actor)
     audit(db, actor, f'scheduling_pilot_{row.status}', 'scheduling_pilot', row.id, payload.result_note)
     return row

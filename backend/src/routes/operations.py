@@ -8,6 +8,8 @@ from ..models import RevenueReview, User
 from ..operations_models import SchedulingPilot
 from ..operations_schemas import ConfirmPilot, OpenPilot, SubmitCloseout, WithdrawPilot
 from ..services.operations import closeout_status, plan_by_id, resolve_pilot, save_pilot, submit_closeout, summarize_closeouts
+from ..subsidy import service as subsidy
+from ..subsidy.models import SubsidyReservation
 
 router = APIRouter(prefix='/plans', tags=['cinema operations'])
 boxoffice = require_roles('boxoffice', 'admin')
@@ -55,8 +57,17 @@ def pilots(plan_id: int, db: Session = Depends(get_db), user: User = Depends(cur
     plan_by_id(db, plan_id)
     rows = db.scalars(select(SchedulingPilot).join(RevenueReview).where(
         RevenueReview.plan_id == plan_id,
-    ).order_by(SchedulingPilot.show_date, SchedulingPilot.show_time, SchedulingPilot.id.desc()))
-    return {'items': [pilot_json(row) for row in rows]}
+    ).order_by(SchedulingPilot.show_date, SchedulingPilot.show_time, SchedulingPilot.id.desc())).all()
+    reservations = {row.pilot_id: row for row in db.scalars(
+        select(SubsidyReservation).where(SubsidyReservation.pilot_id.in_([pilot.id for pilot in rows])),
+    )} if rows else {}
+    items = []
+    for row in rows:
+        data = pilot_json(row)
+        reservation = reservations.get(row.id)
+        data['subsidy'] = subsidy.reservation_json(reservation) if reservation else None
+        items.append(data)
+    return {'items': items, 'subsidy': subsidy.pool_json(subsidy.get_pool(db))}
 
 
 @router.post('/{plan_id}/scheduling-pilots', status_code=201)

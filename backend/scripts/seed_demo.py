@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from src.database import SessionLocal
 from src.models import ExperimentUnit, ScreeningPlan, TicketObservation, User
 from src.security import hash_password
+from src.subsidy.models import SubsidyPool
 
 USERS = [
     ("planner@cinema.local", "排片策划", "planner"),
@@ -40,6 +41,8 @@ def seed():
                     sold = (i % 5 != 0) if unit.group_name == "treatment" else (i % 3 != 0)
                     db.add(TicketObservation(unit_id=unit.id, ticket_code=f"SEED-CINEMA-{number:03d}", seat_label=f"{unit.seat_zone}-{i+1:02d}", sold=sold, price_paid=58 if sold else 0, source="seed-box-office"))
                     number += 1
+        if not db.query(SubsidyPool).filter_by(code="weekend").first():
+            db.add(SubsidyPool(code="weekend", total_cents=600000, per_seat_cents=2000))
         db.commit()
         print("seed ok")
     finally:

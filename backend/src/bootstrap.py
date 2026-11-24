@@ -3,6 +3,7 @@ from sqlalchemy import text
 from .database import Base, engine
 from . import operations_models  # Registers the operational tables before create_all.
 from .settlement import models as settlement_models  # Registers the pilot settlement table.
+from .subsidy import models as subsidy_models  # Registers the weekend subsidy tables.
 from .config import SEED_DEMO
 
 def bootstrap():
